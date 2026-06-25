@@ -25,9 +25,9 @@ SYMBOLS = ["GBPJPY", "XAUUSD", "BTCUSD", "EURUSD", "GBPUSD"]
 def get_lot_size(symbol: str) -> float:
     symbol_upper = symbol.upper()
     if "XAU" in symbol_upper or "GOLD" in symbol_upper:
-        return 0.03  # Gold
+        return 0.01  # Gold (reduced for volatility safety)
     elif "BTC" in symbol_upper or "ETH" in symbol_upper:
-        return 0.05  # Crypto
+        return 0.01  # Crypto (reduced for volatility safety)
     else:
         return 0.1   # Currencies
 
