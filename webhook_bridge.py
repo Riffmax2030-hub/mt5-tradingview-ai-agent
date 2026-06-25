@@ -93,8 +93,18 @@ async def monitor_and_close_profitable_positions():
                 volume = pos['volume']
                 comment = str(pos.get('comment', ''))
                 
-                # 1. If it belongs to a TRADENOW basket
-                if comment.startswith("BASKET_"):
+                # 1. Evaluate individual profit-locking and group basket trades
+                if comment.startswith("BASKET_BEST_"):
+                    if profit >= 2.00:
+                        logger.info(f"Profit-lock hit for Best-Trend Position {pos_id} ({symbol}): ${profit:.2f}. Auto-closing...")
+                        client.order.close_position(pos_id)
+                        continue
+                    baskets.setdefault(comment, []).append(pos)
+                elif comment.startswith("BASKET_"):
+                    if profit >= 3.00:
+                        logger.info(f"Profit-lock hit for Standard Basket Position {pos_id} ({symbol}): ${profit:.2f}. Auto-closing...")
+                        client.order.close_position(pos_id)
+                        continue
                     baskets.setdefault(comment, []).append(pos)
                 else:
                     # 2. Standard individual trade tracking: close if profit >= $10.00
