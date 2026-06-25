@@ -69,7 +69,7 @@ def get_default_sltp_offsets(symbol: str, action: str, entry_price: float):
 async def monitor_and_close_profitable_positions():
     """
     Background loop that monitors active positions.
-    1. Tracks standard trades and closes individual positions at +$10.00 profit.
+    1. Tracks standard trades and closes individual positions at +$3.00 profit (standard) or +$2.00 (best trend).
     2. Tracks "BASKET_*" trade groups and closes the entire basket when the net profit >= $10.00.
     """
     logger.info("Starting Profit Monitoring Background Task...")
@@ -79,19 +79,19 @@ async def monitor_and_close_profitable_positions():
             if not client._connection.is_connected:
                 continue
                 
-            positions = client.order.get_all_positions()
-            if positions is None or positions.empty:
+            raw_positions = mt5.positions_get()
+            if raw_positions is None or len(raw_positions) == 0:
                 continue
                 
-            # Dictionary to group basket trades: {basket_id: [list of position rows]}
+            # Dictionary to group basket trades: {basket_id: [list of position objects]}
             baskets = {}
             
-            for _, pos in positions.iterrows():
-                pos_id = pos['id']
-                profit = pos['profit']
-                symbol = pos['symbol']
-                volume = pos['volume']
-                comment = str(pos.get('comment', ''))
+            for pos in raw_positions:
+                pos_id = pos.ticket
+                profit = pos.profit
+                symbol = pos.symbol
+                volume = pos.volume
+                comment = getattr(pos, 'comment', '')
                 
                 # 1. Evaluate individual profit-locking and group basket trades
                 if comment.startswith("BASKET_BEST_"):
@@ -115,17 +115,17 @@ async def monitor_and_close_profitable_positions():
             
             # 3. Evaluate basket profits
             for basket_id, pos_list in baskets.items():
-                total_basket_profit = sum(p['profit'] for p in pos_list)
+                total_basket_profit = sum(p.profit for p in pos_list)
                 logger.debug(f"Basket {basket_id} has {len(pos_list)} positions. Net Profit: ${total_basket_profit:.2f}")
                 
                 if total_basket_profit >= AUTO_CLOSE_PROFIT_TARGET:
                     logger.info(f"🎉 Basket {basket_id} profit target hit: ${total_basket_profit:.2f}! Closing all {len(pos_list)} trades...")
                     
                     for p in pos_list:
-                        pos_id = p['id']
-                        symbol = p['symbol']
-                        volume = p['volume']
-                        p_profit = p['profit']
+                        pos_id = p.ticket
+                        symbol = p.symbol
+                        volume = p.volume
+                        p_profit = p.profit
                         logger.info(f"Closing basket trade {pos_id} ({symbol} {volume} lot) current profit: ${p_profit:.2f}")
                         client.order.close_position(pos_id)
                         
