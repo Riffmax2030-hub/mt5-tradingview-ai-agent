@@ -22,9 +22,6 @@ MT5_CONFIG = {
     "server": "Exness-MT5Trial10"
 }
 
-# Default trade volume if not specified in signal
-DEFAULT_VOLUME = 0.05
-
 client = MT5Client(MT5_CONFIG)
 
 @app.on_event("startup")
@@ -49,6 +46,18 @@ def clean_symbol(symbol_str: str) -> str:
     if ":" in symbol_str:
         symbol_str = symbol_str.split(":")[-1]
     return symbol_str.upper().strip()
+
+def get_lot_size(symbol: str) -> float:
+    """
+    Enforces specific lot sizes based on the asset class to manage risk.
+    """
+    symbol_upper = symbol.upper()
+    if "XAU" in symbol_upper or "GOLD" in symbol_upper:
+        return 0.03  # Gold target lot size
+    elif "BTC" in symbol_upper or "ETH" in symbol_upper:
+        return 0.05  # Crypto lot size
+    else:
+        return 0.1  # Default lot size for all currency pairs (GBPJPY, GBPCAD, etc.)
 
 def parse_plain_text_signal(text: str):
     logger.info(f"Attempting to parse plain text signal: {text}")
@@ -75,7 +84,7 @@ def parse_plain_text_signal(text: str):
         return {
             "action": action,
             "symbol": symbol,
-            "volume": DEFAULT_VOLUME,
+            "volume": get_lot_size(symbol),
             "sl": None,
             "tp": None
         }
@@ -95,10 +104,11 @@ async def receive_webhook(request: Request):
         symbol_val = data.get("symbol")
         
         if action_val and symbol_val:
+            symbol_cleaned = clean_symbol(str(symbol_val))
             parsed_data = {
                 "action": str(action_val).upper().strip(),
-                "symbol": clean_symbol(str(symbol_val)),
-                "volume": float(data.get("volume", DEFAULT_VOLUME)),
+                "symbol": symbol_cleaned,
+                "volume": get_lot_size(symbol_cleaned), # Override volume dynamically
                 "sl": float(data.get("sl")) if data.get("sl") is not None else None,
                 "tp": float(data.get("tp")) if data.get("tp") is not None else None
             }
@@ -124,7 +134,7 @@ async def receive_webhook(request: Request):
             logger.info("MT5 disconnected. Attempting to reconnect...")
             client.connect()
             
-        # Get current market price to pass to send_order
+        # Get current market price
         price_info = client.market.get_symbol_price(symbol)
         price = price_info["ask"] if action == "BUY" else price_info["bid"]
         
