@@ -2,6 +2,8 @@ import os
 import re
 import json
 import logging
+import asyncio
+import MetaTrader5 as mt5
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
@@ -22,7 +24,103 @@ MT5_CONFIG = {
     "server": "Exness-MT5Trial10"
 }
 
+# Profit target to auto-close trades (in USD)
+AUTO_CLOSE_PROFIT_TARGET = 10.0
+
 client = MT5Client(MT5_CONFIG)
+
+def get_lot_size(symbol: str) -> float:
+    symbol_upper = symbol.upper()
+    if "XAU" in symbol_upper or "GOLD" in symbol_upper:
+        return 0.03  # Gold
+    elif "BTC" in symbol_upper or "ETH" in symbol_upper:
+        return 0.05  # Crypto
+    else:
+        return 0.1  # Currencies
+
+def get_default_sltp_offsets(symbol: str, action: str, entry_price: float):
+    symbol_upper = symbol.upper()
+    action_upper = action.upper()
+    
+    # Query MT5 for point and digits info
+    symbol_info = mt5.symbol_info(symbol)
+    point = symbol_info.point if symbol_info else 0.00001
+    
+    if "XAU" in symbol_upper or "GOLD" in symbol_upper:
+        offset_sl = 5.0
+        offset_tp = 10.0
+    elif "BTC" in symbol_upper:
+        offset_sl = 300.0
+        offset_tp = 600.0
+    else:
+        # Forex: 30 pips stop loss, 60 pips take profit (1 pip = 10 points)
+        offset_sl = 30 * 10 * point
+        offset_tp = 60 * 10 * point
+        
+    if action_upper == "BUY":
+        sl = entry_price - offset_sl
+        tp = entry_price + offset_tp
+    else:
+        sl = entry_price + offset_sl
+        tp = entry_price - offset_tp
+        
+    return round(sl, 5), round(tp, 5)
+
+async def monitor_and_close_profitable_positions():
+    """
+    Background loop that monitors active positions.
+    1. Tracks standard trades and closes individual positions at +$10.00 profit.
+    2. Tracks "BASKET_*" trade groups and closes the entire basket when the net profit >= $10.00.
+    """
+    logger.info("Starting Profit Monitoring Background Task...")
+    while True:
+        await asyncio.sleep(2) # Check every 2 seconds for faster response
+        try:
+            if not client._connection.is_connected:
+                continue
+                
+            positions = client.order.get_all_positions()
+            if positions is None or positions.empty:
+                continue
+                
+            # Dictionary to group basket trades: {basket_id: [list of position rows]}
+            baskets = {}
+            
+            for _, pos in positions.iterrows():
+                pos_id = pos['id']
+                profit = pos['profit']
+                symbol = pos['symbol']
+                volume = pos['volume']
+                comment = str(pos.get('comment', ''))
+                
+                # 1. If it belongs to a TRADENOW basket
+                if comment.startswith("BASKET_"):
+                    baskets.setdefault(comment, []).append(pos)
+                else:
+                    # 2. Standard individual trade tracking: close if profit >= $10.00
+                    if profit >= AUTO_CLOSE_PROFIT_TARGET:
+                        logger.info(f"Target profit hit for Position {pos_id} ({symbol} {volume} lot): ${profit:.2f}. Auto-closing...")
+                        close_result = client.order.close_position(pos_id)
+                        logger.info(f"Auto-close result for Position {pos_id}: {close_result}")
+            
+            # 3. Evaluate basket profits
+            for basket_id, pos_list in baskets.items():
+                total_basket_profit = sum(p['profit'] for p in pos_list)
+                logger.debug(f"Basket {basket_id} has {len(pos_list)} positions. Net Profit: ${total_basket_profit:.2f}")
+                
+                if total_basket_profit >= AUTO_CLOSE_PROFIT_TARGET:
+                    logger.info(f"🎉 Basket {basket_id} profit target hit: ${total_basket_profit:.2f}! Closing all {len(pos_list)} trades...")
+                    
+                    for p in pos_list:
+                        pos_id = p['id']
+                        symbol = p['symbol']
+                        volume = p['volume']
+                        p_profit = p['profit']
+                        logger.info(f"Closing basket trade {pos_id} ({symbol} {volume} lot) current profit: ${p_profit:.2f}")
+                        client.order.close_position(pos_id)
+                        
+        except Exception as e:
+            logger.error(f"Error in profit monitoring loop: {e}")
 
 @app.on_event("startup")
 def startup_event():
@@ -30,6 +128,10 @@ def startup_event():
         logger.info("Connecting to MetaTrader 5...")
         client.connect()
         logger.info("Successfully connected to MetaTrader 5 terminal!")
+        
+        # Start the background profit monitoring task
+        asyncio.create_task(monitor_and_close_profitable_positions())
+        
     except Exception as e:
         logger.error(f"Failed to connect to MT5 during startup: {e}")
 
@@ -46,18 +148,6 @@ def clean_symbol(symbol_str: str) -> str:
     if ":" in symbol_str:
         symbol_str = symbol_str.split(":")[-1]
     return symbol_str.upper().strip()
-
-def get_lot_size(symbol: str) -> float:
-    """
-    Enforces specific lot sizes based on the asset class to manage risk.
-    """
-    symbol_upper = symbol.upper()
-    if "XAU" in symbol_upper or "GOLD" in symbol_upper:
-        return 0.03  # Gold target lot size
-    elif "BTC" in symbol_upper or "ETH" in symbol_upper:
-        return 0.05  # Crypto lot size
-    else:
-        return 0.1  # Default lot size for all currency pairs (GBPJPY, GBPCAD, etc.)
 
 def parse_plain_text_signal(text: str):
     logger.info(f"Attempting to parse plain text signal: {text}")
@@ -108,7 +198,7 @@ async def receive_webhook(request: Request):
             parsed_data = {
                 "action": str(action_val).upper().strip(),
                 "symbol": symbol_cleaned,
-                "volume": get_lot_size(symbol_cleaned), # Override volume dynamically
+                "volume": get_lot_size(symbol_cleaned),
                 "sl": float(data.get("sl")) if data.get("sl") is not None else None,
                 "tp": float(data.get("tp")) if data.get("tp") is not None else None
             }
@@ -138,7 +228,16 @@ async def receive_webhook(request: Request):
         price_info = client.market.get_symbol_price(symbol)
         price = price_info["ask"] if action == "BUY" else price_info["bid"]
         
-        logger.info(f"Executing {action} order for {volume} lots of {symbol} at current price {price} with SL={parsed_data['sl']}, TP={parsed_data['tp']}")
+        # Safety net: If SL or TP are missing, calculate default levels
+        sl = parsed_data["sl"]
+        tp = parsed_data["tp"]
+        if sl is None or tp is None:
+            default_sl, default_tp = get_default_sltp_offsets(symbol, action, price)
+            sl = default_sl if sl is None else sl
+            tp = default_tp if tp is None else tp
+            logger.info(f"SL/TP missing in signal. Applying defaults: SL={sl}, TP={tp}")
+        
+        logger.info(f"Executing {action} order for {volume} lots of {symbol} at current price {price} with SL={sl}, TP={tp}")
         
         result = send_order(
             client._connection,
@@ -147,8 +246,8 @@ async def receive_webhook(request: Request):
             symbol=symbol,
             volume=volume,
             price=price,
-            stop_loss=parsed_data["sl"] if parsed_data["sl"] is not None else 0.0,
-            take_profit=parsed_data["tp"] if parsed_data["tp"] is not None else 0.0,
+            stop_loss=sl,
+            take_profit=tp,
         )
         
         logger.info(f"Order result: {result}")
