@@ -75,7 +75,7 @@ def get_market_trend_advanced(symbol: str) -> str:
             prev_close = df['close'].iloc[-4] if len(df) >= 4 else df['open'].iloc[-1]
             trend = "BUY" if last_close > prev_close else "SELL"
             
-        logger.info(f"Analysis for {symbol} (M5) - EMA9: {last_ema9:.5f}, EMA21: {last_ema21:.5f}, RSI: {last_rsi:.1f} ➔ Trend: {trend}")
+        logger.info(f"Analysis for {symbol} (M5) - EMA9: {last_ema9:.5f}, EMA21: {last_ema21:.5f}, RSI: {last_rsi:.1f} -> Trend: {trend}")
         return trend
         
     except Exception as e:

@@ -144,7 +144,7 @@ def main():
         best_trend = "BUY"
         best_details = "Fallback default"
         
-    print(f"\n➔ **Selected Best Setup**: **{best_symbol}** is in a strong **{best_trend}** trend (Score: {best_score:.2f}).")
+    print(f"\n-> **Selected Best Setup**: **{best_symbol}** is in a strong **{best_trend}** trend (Score: {best_score:.2f}).")
     print(f"Details: {best_details}")
     
     basket_id = f"BASKET_BEST_{best_symbol}_{int(time.time())}"
