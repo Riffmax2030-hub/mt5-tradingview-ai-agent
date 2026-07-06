@@ -314,9 +314,9 @@ def run_alphaedge():
         active_symbols = [s.name for s in mt5.symbols_get() if "BTC" in s.name or "ETH" in s.name]
         print(f"\n[Weekend Mode] Forex and Gold markets are closed. Scanning Crypto only: {active_symbols}\n")
     else:
-        # Scan all visible symbols on weekdays
-        active_symbols = [s.name for s in mt5.symbols_get() if s.visible]
-        print("\n[Weekday Mode] Scanning all available visible symbols...\n")
+        # Scan all visible symbols that are in our custom SYMBOLS list on weekdays
+        active_symbols = [s.name for s in mt5.symbols_get() if s.visible and s.name in SYMBOLS]
+        print(f"\n[Weekday Mode] Scanning active filtered symbols: {active_symbols}\n")
 
     print("=== -> AlphaEdge Structural Tops/Bottoms Scan (M30 Timeframe) ===")
     print("| Symbol | Setup | Price | Stop Loss | Take Profit | R:R | Analysis Details |")
