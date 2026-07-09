@@ -285,7 +285,7 @@ def run_alphaedge():
                         is_in_profit = True
                         
                     if is_in_profit:
-                        lock_in_profit = 0.2 * atr
+                        lock_in_profit = 0.5 * atr
                         target_sl = round(pos.price_open + lock_in_profit if pos.type == mt5.ORDER_TYPE_BUY else pos.price_open - lock_in_profit, 5)
                         
                         needs_adjustment = False
