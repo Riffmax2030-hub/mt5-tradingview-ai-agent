@@ -285,10 +285,13 @@ def run_alphaedge():
                         is_in_profit = True
                         
                     if is_in_profit:
+                        lock_in_profit = 0.2 * atr
+                        target_sl = round(pos.price_open + lock_in_profit if pos.type == mt5.ORDER_TYPE_BUY else pos.price_open - lock_in_profit, 5)
+                        
                         needs_adjustment = False
-                        if pos.type == mt5.ORDER_TYPE_BUY and (pos.sl < (pos.price_open - 0.01) or pos.sl == 0):
+                        if pos.type == mt5.ORDER_TYPE_BUY and (pos.sl < target_sl or pos.sl == 0):
                             needs_adjustment = True
-                        elif pos.type == mt5.ORDER_TYPE_SELL and (pos.sl > (pos.price_open + 0.01) or pos.sl == 0):
+                        elif pos.type == mt5.ORDER_TYPE_SELL and (pos.sl > target_sl or pos.sl == 0):
                             needs_adjustment = True
                             
                         if needs_adjustment:
@@ -296,12 +299,12 @@ def run_alphaedge():
                                 "action": mt5.TRADE_ACTION_SLTP,
                                 "position": pos.ticket,
                                 "symbol": pos.symbol,
-                                "sl": round(pos.price_open, 5),
+                                "sl": target_sl,
                                 "tp": pos.tp
                             }
                             res = mt5.order_send(request)
                             if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                                logger.info(f"Moved SL to BREAKEVEN for {symbol} position {pos.ticket} (1.0x ATR profit reached)")
+                                logger.info(f"Moved SL to SECURE PROFIT ({target_sl}) for {symbol} position {pos.ticket} (1.0x ATR profit reached)")
                             else:
                                 logger.error(f"Failed to adjust SL to breakeven for {symbol}: {res.retcode if res else 'N/A'} ({res.comment if res else ''})")
 
