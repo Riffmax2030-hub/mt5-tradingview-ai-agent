@@ -32,7 +32,8 @@ MT5_CONFIG = {
 
 SYMBOLS = [
     # Refined Top Performers Only (including ETHUSD and US500)
-    "GBPUSD", "USDCAD", "EURGBP", "USTEC", "XAUUSD", "XAGUSD", "BTCUSD", "US30", "USOIL", "USDCHF", "ETHUSD", "US500"
+    "GBPUSD", "USDCAD", "EURGBP", "USTEC", "XAUUSD", "XAGUSD", "BTCUSD", "US30", "USOIL", "USDCHF", "ETHUSD", "US500",
+    "EURUSD", "USDJPY", "AUDUSD", "GBPJPY", "DE30", "SOLUSD", "XRPUSD", "LTCUSD"
 ]
 
 from trading_bot_skills.indicators import (
