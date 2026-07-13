@@ -31,10 +31,10 @@ except Exception as e:
     logger.error(f"Error importing strategy modules: {e}")
     sys.exit(1)
 
-INTERVAL_SECONDS = 300  # 5 minutes
+INTERVAL_SECONDS = 120  # 2 minutes
 
 def main():
-    logger.info("=== Starting Autonomous Strategy Trader (5-Minute Cycle) ===")
+    logger.info("=== Starting Autonomous Strategy Trader (2-Minute Cycle) ===")
     
     while True:
         cycle_start = datetime.now()

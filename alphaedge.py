@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import concurrent.futures
 import logging
 from datetime import datetime
 import pandas as pd
@@ -329,19 +330,28 @@ def run_alphaedge():
     open_symbols = [p.symbol for p in open_positions] if open_positions else []
     
     scan_results = {}
-    for symbol in active_symbols:
+    
+    def scan_symbol(symbol):
         symbol_info = mt5.symbol_info(symbol)
         if not symbol_info or not symbol_info.visible:
-            continue
-            
-        action, sl, tp, entry_price, details = analyze_structural_edge(symbol)
-        scan_results[symbol] = {
-            "action": action,
-            "sl": sl,
-            "tp": tp,
-            "entry_price": entry_price,
-            "details": details
-        }
+            return symbol, ("NEUTRAL", 0.0, 0.0, 0.0, "Symbol not available/visible")
+        try:
+            res = analyze_structural_edge(symbol)
+            return symbol, res
+        except Exception as e:
+            return symbol, ("NEUTRAL", 0.0, 0.0, 0.0, f"Error: {e}")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(scan_symbol, s): s for s in active_symbols}
+        for future in concurrent.futures.as_completed(futures):
+            symbol, (action, sl, tp, entry_price, details) = future.result()
+            scan_results[symbol] = {
+                "action": action,
+                "sl": sl,
+                "tp": tp,
+                "entry_price": entry_price,
+                "details": details
+            }
         
     # Apply Metals Correlation Filter (XAUUSD and XAGUSD)
     xau = scan_results.get("XAUUSD")
