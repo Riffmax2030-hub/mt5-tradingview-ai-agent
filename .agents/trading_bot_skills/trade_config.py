@@ -30,6 +30,6 @@ MANUAL_TRIGGER_KEY = "A"
 SCAN_INTERVAL_MINUTES = 10
 
 # Telegram Alert Settings
-TELEGRAM_ENABLED = False  # Set to True once you enter your token and chat ID
-TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-TELEGRAM_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"
+TELEGRAM_ENABLED = True  # Set to True once you enter your token and chat ID
+TELEGRAM_TOKEN = "8617130364:AAHiEg1W9A-L5f7XkqVzgV6mTotb7TSiJV0"
+TELEGRAM_CHAT_ID = "915238743"
