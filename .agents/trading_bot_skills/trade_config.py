@@ -28,3 +28,8 @@ MANUAL_TRIGGER_KEY = "A"
 
 # Scan schedule (minutes between automatic scans)
 SCAN_INTERVAL_MINUTES = 10
+
+# Telegram Alert Settings
+TELEGRAM_ENABLED = False  # Set to True once you enter your token and chat ID
+TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+TELEGRAM_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"

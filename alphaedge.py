@@ -46,7 +46,27 @@ from trading_bot_skills.indicators import (
 )
 from trading_bot_skills.risk import assess_risk
 from trading_bot_skills.token_stub import get_tradingagents_token
+from trading_bot_skills.trade_config import TELEGRAM_ENABLED, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
 
+def send_telegram_alert(message: str):
+    if not TELEGRAM_ENABLED:
+        return
+    import urllib.request
+    import urllib.parse
+    import json
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            response.read()
+    except Exception as e:
+        logger.error(f"Failed to send Telegram alert: {e}")
 
 def get_lot_size(symbol: str, sl_price: float = 0.0, entry_price: float = 0.0) -> float:
     """Return the minimum allowable volume for the symbol to place a micro trade."""
@@ -306,7 +326,9 @@ def run_alphaedge():
                             }
                             res = mt5.order_send(request)
                             if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                                msg = f"🔒 <b>[AlphaEdge SL Adjusted]</b>\nSymbol: {symbol}\nPosition: {pos.ticket}\nAction: Moved SL to SECURE PROFIT ({target_sl}) (1.0x ATR profit reached)"
                                 logger.info(f"Moved SL to SECURE PROFIT ({target_sl}) for {symbol} position {pos.ticket} (1.0x ATR profit reached)")
+                                send_telegram_alert(msg)
                             else:
                                 logger.error(f"Failed to adjust SL to breakeven for {symbol}: {res.retcode if res else 'N/A'} ({res.comment if res else ''})")
 
@@ -417,6 +439,8 @@ def run_alphaedge():
             if result.get("success"):
                 ticket = block_id = result.get("data").order if result.get("data") else "Filled"
                 logger.info(f"Successfully entered {action} on {symbol} (Ticket: {ticket}, SL: {sl:.5f}, TP: {tp:.5f})")
+                msg = f"🚀 <b>[AlphaEdge Position Opened]</b>\nSymbol: {symbol}\nAction: {action}\nLot Size: {volume}\nEntry Price: {entry_price:.5f}\nSL: {sl:.5f}\nTP: {tp:.5f}"
+                send_telegram_alert(msg)
                 # Log the trade entry to Excel
                 try:
                     log_trade(symbol, action, entry_price, sl, tp, volume, "ALPHAEDGE_TRADE")
