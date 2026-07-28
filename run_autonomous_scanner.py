@@ -37,13 +37,17 @@ def main():
     logger.info("=== Starting Autonomous Strategy Trader (2-Minute Cycle) ===")
     
     while True:
+        if os.path.exists("alphaedge.paused"):
+            logger.info("AlphaEdge is paused by Telegram command.")
+            time.sleep(INTERVAL_SECONDS)
+            continue
         cycle_start = datetime.now()
         logger.info(f"--- Starting scan cycle at {cycle_start.strftime('%Y-%m-%d %H:%M:%S')} ---")
         
         # 1. Run AlphaEdge Strategy Scan
         try:
             logger.info("Running AlphaEdge scan...")
-            alphaedge.run_alphaedge()
+            alphaedge.run_alphaedge(execute_orders=True)
         except Exception as e:
             logger.error(f"Error executing AlphaEdge scan: {e}")
             

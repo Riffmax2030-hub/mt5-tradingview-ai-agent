@@ -7,7 +7,8 @@ from datetime import datetime
 import pandas as pd
 import numpy as np
 import sys, os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'brain', '86033144-bf85-4d61-ac17-b7e233ed37cb', '.agents')))
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(PROJECT_ROOT, ".agents"))
 from metatrader_client import MT5Client
 from metatrader_client.order.send_order import send_order
 from metatrader_client.types import TradeRequestActions, OrderType
@@ -24,11 +25,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger("AlphaEdge")
 
-# Verified MT5 Credentials
+def load_environment_file() -> None:
+    """Load local KEY=VALUE settings without adding another dependency."""
+    environment_path = os.path.join(os.path.dirname(__file__), ".env")
+    if not os.path.isfile(environment_path):
+        return
+
+    with open(environment_path, encoding="utf-8") as environment_file:
+        for line in environment_file:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip())
+
+
+load_environment_file()
+
 MT5_CONFIG = {
-    "login": 81627783,
-    "password": "Iamgreat@2030",
-    "server": "Exness-MT5Trial10"
+    "login": int(os.environ["MT5_LOGIN"]),
+    "password": os.environ["MT5_PASSWORD"],
+    "server": os.environ["MT5_SERVER"],
 }
 
 SYMBOLS = [
@@ -36,6 +53,10 @@ SYMBOLS = [
     "GBPUSD", "USDCAD", "EURGBP", "USTEC", "XAUUSD", "XAGUSD", "BTCUSD", "US30", "USOIL", "USDCHF", "ETHUSD", "US500",
     "EURUSD", "USDJPY", "AUDUSD", "GBPJPY", "DE30", "SOLUSD", "XRPUSD", "LTCUSD"
 ]
+MAX_DAILY_LOSS_USD = 5.0
+DAILY_PROFIT_TARGET_USD = 50.0
+PULLBACK_ATR_FRACTION = 0.25
+PENDING_ORDER_EXPIRY_SECONDS = 7200
 
 from trading_bot_skills.indicators import (
     calculate_bollinger_bands,
@@ -208,12 +229,22 @@ def analyze_structural_edge(symbol: str):
                     h1_status = f"H1 Bearish/Overbought (RSI: {last_h1_rsi:.1f})"
         else:
             h1_status = "No H1 Data"
+
+        d1_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_D1, 0, 80)
+        if d1_rates is None or len(d1_rates) < 50:
+            return "NEUTRAL", 0.0, 0.0, 0.0, "Insufficient D1 data"
+        df_d1 = pd.DataFrame(d1_rates)
+        df_d1["ema20"] = calculate_ema(df_d1, 20)
+        df_d1["ema50"] = calculate_ema(df_d1, 50)
+        d1_close, d1_ema20, d1_ema50 = df_d1["close"].iloc[-1], df_d1["ema20"].iloc[-1], df_d1["ema50"].iloc[-1]
+        d1_bullish = d1_close > d1_ema20 > d1_ema50
+        d1_bearish = d1_close < d1_ema20 < d1_ema50
             
         is_bottom_zone = (last_close <= bb_lower or last_low <= (support + (0.5 * last_atr))) and last_rsi <= 32
         is_top_zone = (last_close >= bb_upper or last_high >= (resistance - (0.5 * last_atr))) and last_rsi >= 68
         
-        is_bottom = is_bottom_zone and m5_confirmed_buy
-        is_top = is_top_zone and m5_confirmed_sell
+        is_bottom = is_bottom_zone and m5_confirmed_buy and d1_bullish
+        is_top = is_top_zone and m5_confirmed_sell and d1_bearish
         
         action = "NEUTRAL"
         sl, tp = 0.0, 0.0
@@ -226,6 +257,7 @@ def analyze_structural_edge(symbol: str):
             
         if is_bottom:
             action = "BUY"
+            last_close -= PULLBACK_ATR_FRACTION * last_atr
             sl = support - (1.0 * last_atr)
             tp = resistance - (0.2 * last_atr)
             # Adjust SL/TP based on risk appetite (neutral by default)
@@ -240,6 +272,7 @@ def analyze_structural_edge(symbol: str):
                 
         elif is_top:
             action = "SELL"
+            last_close += PULLBACK_ATR_FRACTION * last_atr
             sl = resistance + (1.0 * last_atr)
             tp = support + (0.2 * last_atr)
             # Adjust SL/TP based on risk appetite (neutral by default)
@@ -257,7 +290,7 @@ def analyze_structural_edge(symbol: str):
         logger.error(f"Failed to analyze structural edge for {symbol}: {e}")
         return "NEUTRAL", 0.0, 0.0, 0.0, f"Error: {e}"
 
-def run_alphaedge():
+def run_alphaedge(execute_orders: bool = False, approved_symbols: set[str] | None = None):
     client = MT5Client(MT5_CONFIG)
     try:
         client.connect()
@@ -278,19 +311,17 @@ def run_alphaedge():
         if not exits_today.empty:
             daily_profit = exits_today['profit'].sum() + exits_today['commission'].sum() + exits_today['swap'].sum()
             
-    # Allow temporary reset/bypass for today (June 29, 2026) to test the new SL parameters
-    # Bypass daily profit limit for testing - allow trades regardless of daily P/L
-    # if (daily_profit <= -200.0 or daily_profit >= 400.0) and datetime.now().date() != datetime(2026, 6, 29).date():
-    #     logger.warning(f"Prop Firm Limit hit (Drawdown: -$200 / Target: +$400). Today's Net P&L: ${daily_profit:+.2f}. Disabling trades for today.")
-    #     client.disconnect()
-    #     return
+    if daily_profit <= -MAX_DAILY_LOSS_USD or daily_profit >= DAILY_PROFIT_TARGET_USD:
+        logger.warning(f"Daily guardrail reached: ${daily_profit:+.2f}. No new orders today.")
+        client.disconnect()
+        return []
     #     logger.warning(f"Prop Firm Limit hit (Drawdown: -$200 / Target: +$400). Today's Net P&L: ${daily_profit:+.2f}. Disabling trades for today.")
     #     client.disconnect()
     #     return
 
     # 2. Manage Breakeven for Active Positions
     open_positions = mt5.positions_get()
-    if open_positions:
+    if execute_orders and open_positions:
         for pos in open_positions:
             if getattr(pos, 'comment', '') == "ALPHAEDGE_TRADE":
                 symbol = pos.symbol
@@ -408,36 +439,39 @@ def run_alphaedge():
     if not triggers:
         print("\n-> **No structural tops/bottoms confirmed for entry.** (Waiting for price to hit extreme S/R zones).")
         client.disconnect()
-        return
+        return []
+
+    if not execute_orders:
+        print("\n=== -> Approval Required: no orders submitted ===")
+        for symbol, action, sl, tp, entry_price in triggers:
+            print(f"PENDING | {symbol} | {action} | Entry {entry_price:.5f} | SL {sl:.5f} | TP {tp:.5f}")
+        client.disconnect()
+        return triggers
 
     print("\n=== -> Executing Structural Edge Orders ===")
     open_positions = mt5.positions_get()
     active_symbols = []
     if open_positions:
         active_symbols = [pos.symbol for pos in open_positions if getattr(pos, 'comment', '') == "ALPHAEDGE_TRADE"]
+    pending_orders = mt5.orders_get() or []
+    active_symbols.extend(order.symbol for order in pending_orders if getattr(order, 'comment', '') == "ALPHAEDGE_TRADE")
 
     for symbol, action, sl, tp, entry_price in triggers:
+        if approved_symbols is not None and symbol not in approved_symbols:
+            logger.info(f"Skipping {symbol}: not in the approved symbol list.")
+            continue
         if symbol in active_symbols:
             logger.info(f"Skipping execution for {symbol}: A trade is already active on this symbol.")
             continue
             
         volume = get_lot_size(symbol, sl, entry_price)
-        order_type = OrderType.BUY if action == "BUY" else OrderType.SELL
+        order_type = mt5.ORDER_TYPE_BUY_LIMIT if action == "BUY" else mt5.ORDER_TYPE_SELL_LIMIT
         
         try:
-            result = send_order(
-                client._connection,
-                action=TradeRequestActions.DEAL,
-                order_type=order_type,
-                symbol=symbol,
-                volume=volume,
-                price=entry_price,
-                stop_loss=round(sl, 5),
-                take_profit=round(tp, 5),
-                comment="ALPHAEDGE_TRADE"
-            )
-            if result.get("success"):
-                ticket = block_id = result.get("data").order if result.get("data") else "Filled"
+            request = {"action": mt5.TRADE_ACTION_PENDING, "symbol": symbol, "volume": volume, "type": order_type, "price": round(entry_price, 5), "sl": round(sl, 5), "tp": round(tp, 5), "type_time": mt5.ORDER_TIME_SPECIFIED, "expiration": int(time.time()) + PENDING_ORDER_EXPIRY_SECONDS, "comment": "ALPHAEDGE_TRADE"}
+            result = mt5.order_send(request)
+            if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                ticket = result.order
                 logger.info(f"Successfully entered {action} on {symbol} (Ticket: {ticket}, SL: {sl:.5f}, TP: {tp:.5f})")
                 msg = f"🚀 <b>[AlphaEdge Position Opened]</b>\nSymbol: {symbol}\nAction: {action}\nLot Size: {volume}\nEntry Price: {entry_price:.5f}\nSL: {sl:.5f}\nTP: {tp:.5f}"
                 send_telegram_alert(msg)
@@ -447,7 +481,7 @@ def run_alphaedge():
                 except Exception as log_err:
                     logger.error(f"Failed to log trade for {symbol}: {log_err}")
             else:
-                logger.error(f"Failed to place {action} order on {symbol}: {result.get('message')}")
+                logger.error(f"Failed to place {action} limit order on {symbol}: {getattr(result, 'comment', mt5.last_error())}")
         except Exception as e:
             logger.error(f"Order send error on {symbol}: {e}")
             

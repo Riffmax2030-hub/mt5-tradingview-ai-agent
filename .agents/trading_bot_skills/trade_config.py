@@ -1,6 +1,7 @@
 # trade_config.py – configuration for the AlphaEdge bot
 
 from pathlib import Path
+import os
 
 # Account parameters (prop‑firm account)
 ACCOUNT_BALANCE = 10_000  # USD
@@ -30,6 +31,6 @@ MANUAL_TRIGGER_KEY = "A"
 SCAN_INTERVAL_MINUTES = 10
 
 # Telegram Alert Settings
-TELEGRAM_ENABLED = True  # Set to True once you enter your token and chat ID
-TELEGRAM_TOKEN = "8617130364:AAHiEg1W9A-L5f7XkqVzgV6mTotb7TSiJV0"
-TELEGRAM_CHAT_ID = "915238743"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_ENABLED = bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
